@@ -5,12 +5,13 @@ import os
 import io
 import zipfile
 from datetime import datetime
+import pandas as pd
 
 def extract_toc_entries(pages):
     toc_text = "".join(page.extract_text() or "" for page in pages)
     pattern = re.compile(r"#\d+:\s+(.*?):\s+(.*?Checklist.*?)\.{3,}\s+(\d+)", re.DOTALL)
     matches = pattern.findall(toc_text)
-    entries = [(int(page_num) - 1, f"{title1.strip()} - {title2.strip()}") for title1, title2, page_num in matches]
+    entries = [(int(page_num) - 1, f"{title1.strip()} - {title2.strip()}", page_num) for title1, title2, page_num in matches]
     return entries
 
 def split_pdf_by_toc(uploaded_files):
@@ -25,57 +26,53 @@ def split_pdf_by_toc(uploaded_files):
             toc_entries.extend(entries)
 
     if not toc_entries:
-        return []
+        return None, None, None, None
 
     split_ranges = []
-    for i, (start, name) in enumerate(toc_entries):
+    for i, (start, name, page_str) in enumerate(toc_entries):
         end = toc_entries[i + 1][0] if i + 1 < len(toc_entries) else len(all_pages)
-        split_ranges.append((start, end, name))
+        split_ranges.append((start, end, name, page_str))
 
-    result_files = []
-    for start, end, name in split_ranges:
-        writer = PdfWriter()
-        for page in all_pages[start:end]:
-            writer.add_page(page)
+    zip_buffer = io.BytesIO()
+    manifest_data = []
+    with zipfile.ZipFile(zip_buffer, "w") as zipf:
+        for start, end, name, page_str in split_ranges:
+            writer = PdfWriter()
+            for page in all_pages[start:end]:
+                writer.add_page(page)
 
-        buffer = io.BytesIO()
-        writer.write(buffer)
-        buffer.seek(0)
+            buffer = io.BytesIO()
+            writer.write(buffer)
+            buffer.seek(0)
 
-        safe_name = re.sub(r'[\\/*?:"<>|]', "_", name.strip()) + ".pdf"
-        result_files.append((safe_name, buffer))
-    return result_files
+            safe_name = re.sub(r'[\\/*?:"<>|]', "_", name.strip()) + ".pdf"
+            zipf.writestr(safe_name, buffer.read())
+            manifest_data.append({"Checklist Name": name, "Start Page": page_str, "File Name": safe_name})
+    zip_buffer.seek(0)
+    return zip_buffer, manifest_data, len(split_ranges), toc_entries[0][1] if toc_entries else "checklists"
 
 st.title("ACC Build Checklist Splitter")
-st.markdown("Upload all parts of the checklist report (e.g., Part 1, Part 2, etc.). This tool will extract the table of contents and split the file accordingly.")
+st.markdown("Upload all parts of the checklist report (e.g., Part 1, Part 2, etc.). This tool will extract the table of contents and split the file accordingly into one ZIP.")
 
 uploaded_files = st.file_uploader("Upload All Report Parts (in order)", type="pdf", accept_multiple_files=True)
 
 if uploaded_files and len(uploaded_files) >= 2:
-    with st.spinner("Splitting checklists using TOC..."):
-        results = split_pdf_by_toc(uploaded_files)
+    with st.spinner("Splitting checklists using TOC and building ZIP..."):
+        zip_data, manifest_data, count, project_prefix = split_pdf_by_toc(uploaded_files)
 
-    if results:
-        st.success(f"Successfully split into {len(results)} checklists!")
-
-        # Offer individual downloads
-        for filename, filedata in results:
-            st.download_button(label=f"Download {filename}", data=filedata, file_name=filename, mime="application/pdf")
-
-        # Generate ZIP filename
+    if zip_data and manifest_data:
         today_str = datetime.now().strftime("%Y-%m-%d")
-        project_prefix = results[0][0].split(" ")[0] if results else "checklists"
-        zip_filename = f"{project_prefix}_checklists_{today_str}.zip"
+        zip_filename = f"{project_prefix.split()[0]}_checklists_{today_str}.zip"
 
-        # Offer a ZIP download
-        zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, "w") as zipf:
-            for filename, filedata in results:
-                zipf.writestr(filename, filedata.getvalue())
-        zip_buffer.seek(0)
-        st.download_button("Download All as ZIP", zip_buffer, file_name=zip_filename, mime="application/zip")
+        st.download_button("📦 Download All Checklists as ZIP", zip_data, file_name=zip_filename, mime="application/zip")
+
+        st.success(f"Successfully split into {count} checklists!")
+
+        st.markdown("### 📋 Manifest of Checklists")
+        manifest_df = pd.DataFrame(manifest_data)
+        st.dataframe(manifest_df, use_container_width=True)
     else:
-        st.error("Could not find any TOC entries. Please make sure the TOC pages are included in the uploaded files.")
+        st.error("No checklists could be extracted from the uploaded files.")
 
 elif uploaded_files:
     st.warning("Please upload at least 2 files (e.g., Part 1, Part 2, ...)")
