@@ -64,7 +64,7 @@ if uploaded_files and len(uploaded_files) >= 2:
         today_str = datetime.now().strftime("%Y-%m-%d")
         zip_filename = f"{project_prefix.split()[0]}_checklists_{today_str}.zip"
 
-        st.download_button("📦 Download All Checklists as ZIP", zip_data, file_name=zip_filename, mime="application/zip")
+        st.download_button("📦 Download All Checklists as ZIP", data=zip_data.getvalue(), file_name=zip_filename, mime="application/zip")
 
         st.success(f"Successfully split into {count} checklists!")
 
