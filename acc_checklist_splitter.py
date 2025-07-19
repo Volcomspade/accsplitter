@@ -3,6 +3,8 @@ from PyPDF2 import PdfReader, PdfWriter
 import re
 import os
 import io
+import zipfile
+from datetime import datetime
 
 def extract_toc_entries(pages):
     toc_text = "".join(page.extract_text() or "" for page in pages)
@@ -15,7 +17,6 @@ def split_pdf_by_toc(uploaded_files):
     readers = [PdfReader(f) for f in uploaded_files]
     all_pages = [page for reader in readers for page in reader.pages]
 
-    # Find candidate TOC pages from the beginning of each file (pages 1–5)
     toc_entries = []
     for reader in readers:
         pages_to_check = reader.pages[1:6] if len(reader.pages) > 5 else reader.pages[1:]
@@ -56,8 +57,23 @@ if uploaded_files and len(uploaded_files) >= 2:
 
     if results:
         st.success(f"Successfully split into {len(results)} checklists!")
+
+        # Offer individual downloads
         for filename, filedata in results:
             st.download_button(label=f"Download {filename}", data=filedata, file_name=filename, mime="application/pdf")
+
+        # Generate ZIP filename
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        project_prefix = results[0][0].split(" ")[0] if results else "checklists"
+        zip_filename = f"{project_prefix}_checklists_{today_str}.zip"
+
+        # Offer a ZIP download
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w") as zipf:
+            for filename, filedata in results:
+                zipf.writestr(filename, filedata.getvalue())
+        zip_buffer.seek(0)
+        st.download_button("Download All as ZIP", zip_buffer, file_name=zip_filename, mime="application/zip")
     else:
         st.error("Could not find any TOC entries. Please make sure the TOC pages are included in the uploaded files.")
 
